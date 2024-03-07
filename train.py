@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,14 +13,19 @@ from google.cloud import storage
 client = storage.Client()
 
 # Specify the names of your buckets
-bucket_names = ["healthy_lungs", "viral_pneumonia", "bacterial_pneumonia"]
+bucket_names = ["healthy_lungs", "viral_pneumonia", "bacterial_pneumonia", "covid"]
 
 # Download the dataset files from Google Cloud Storage
 for bucket_name in bucket_names:
     bucket = client.get_bucket(bucket_name)
     blobs = bucket.list_blobs()
     for blob in blobs:
-        blob.download_to_filename(blob.name)
+        destination_file = blob.name
+        if not os.path.exists(destination_file):
+            blob.download_to_filename(destination_file)
+            print(f"Downloaded {destination_file}")
+        else:
+            print(f"File {destination_file} already exists. Skipping download.")
 
 # Add code here to load and preprocess your dataset
 transform = transforms.Compose([
