@@ -13,14 +13,18 @@ from google.cloud import storage
 client = storage.Client()
 
 # Specify the names of your buckets
-bucket_names = ["healthy_lungs", "viral_pneumonia", "bacterial_pneumonia", "covid"]
+bucket_names = ["healthy_lungs", "viral_pneumonia", "bacterial_pneumonia", "lung_coivd", "bronchitis_lungs"]
 
 # Download the dataset files from Google Cloud Storage
 for bucket_name in bucket_names:
     bucket = client.get_bucket(bucket_name)
     blobs = bucket.list_blobs()
+
+    # Create a directory for each bucket (class)
+    os.makedirs(bucket_name, exist_ok=True)
+
     for blob in blobs:
-        destination_file = blob.name
+        destination_file = os.path.join(bucket_name, blob.name)
         if not os.path.exists(destination_file):
             blob.download_to_filename(destination_file)
             print(f"Downloaded {destination_file}")
@@ -34,8 +38,22 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-dataset = datasets.ImageFolder(root=".", transform=transform)
+def is_valid_file(path):
+    # Check if the file has a supported image extension
+    supported_extensions = ['.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp']
+    return os.path.splitext(path)[-1].lower() in supported_extensions
+
+class RemappedImageFolder(datasets.ImageFolder):
+    def __getitem__(self, index):
+        sample, target = super().__getitem__(index)
+        remapped_target = self.class_to_idx[self.classes[target]]
+        return sample, remapped_target
+
+dataset = RemappedImageFolder(root=".", transform=transform, is_valid_file=is_valid_file)
 dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+print("Class names and labels:")
+print(dataset.class_to_idx)
 
 # Define the neural network architecture
 class LungNet(nn.Module):
@@ -44,7 +62,7 @@ class LungNet(nn.Module):
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
         self.fc1 = nn.Linear(32 * 56 * 56, 128)
-        self.fc2 = nn.Linear(128, 5)  # 5 output classes for the 5 types of buckets
+        self.fc2 = nn.Linear(128, len(dataset.classes))  # Output units based on the number of classes
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
