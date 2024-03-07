@@ -1,3 +1,4 @@
+from functools import total_ordering
 import os
 import torch
 import torch.nn as nn
@@ -39,17 +40,34 @@ transform = transforms.Compose([
 ])
 
 def is_valid_file(path):
-    # Check if the file has a supported image extension
     supported_extensions = ['.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tiff', '.webp']
     return os.path.splitext(path)[-1].lower() in supported_extensions
 
 class RemappedImageFolder(datasets.ImageFolder):
+    def __init__(self, root, transform=None, target_transform=None, is_valid_file=None, class_directories=None):
+        self.class_directories = class_directories
+        super().__init__(root, transform=transform, target_transform=target_transform, is_valid_file=is_valid_file)
+
+    def find_classes(self, dir):
+        if self.class_directories is not None:
+            classes = self.class_directories
+        else:
+            classes = [d.name for d in os.scandir(dir) if d.is_dir()]
+        classes.sort()
+        class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
+        return classes, class_to_idx
+
     def __getitem__(self, index):
         sample, target = super().__getitem__(index)
         remapped_target = self.class_to_idx[self.classes[target]]
         return sample, remapped_target
 
-dataset = RemappedImageFolder(root=".", transform=transform, is_valid_file=is_valid_file)
+dataset = RemappedImageFolder(
+    root=".",
+    transform=transform,
+    is_valid_file=is_valid_file,
+    class_directories=["healthy_lungs", "viral_pneumonia", "bacterial_pneumonia", "lung_coivd", "bronchitis_lungs"]
+)
 dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
 print("Class names and labels:")
@@ -74,32 +92,43 @@ class LungNet(nn.Module):
         x = self.fc2(x)
         return x
 
-# Create an instance of the neural network
-model = LungNet()
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = model.to(device)
+if __name__ == '__main__':
+    # Create an instance of the neural network
+    model = LungNet()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
 
-# Define the loss function and optimizer
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # Define the loss function and optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Train the model
-num_epochs = 10
-for epoch in range(num_epochs):
-    running_loss = 0.0
-    for images, labels in dataloader:
-        images = images.to(device)
-        labels = labels.to(device)
+    # Train the model
+    num_epochs = 10
+    for epoch in range(num_epochs):
+        running_loss = 0.0
+        correct = 0
+        total = 0
 
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+        for images, labels in dataloader:
+            images = images.to(device)
+            labels = labels.to(device)
 
-        running_loss += loss.item()
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
-    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {running_loss/len(dataloader)}")
+            running_loss += loss.item()
 
-# Save the trained model
-torch.save(model.state_dict(), "lung_model.pth")
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+        epoch_loss = running_loss / len(dataloader)
+        epoch_accuracy = 100 * correct / total
+        
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.2f}%")
+
+    # Save the trained model
+    torch.save(model.state_dict(), "lung_model.pth")
